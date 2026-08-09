@@ -1,11 +1,14 @@
 use clap::Parser;
-use std::net::{IpAddr};
+use std::net::IpAddr;
 
 #[derive(Parser)]
 pub struct Args {
-    #[clap(long, default_value_t = 5700)]
+    #[clap(long, default_value_t = 8080)]
     pub port: u16,
 
     #[clap(long, default_value = "0.0.0.0")]
-    pub host: IpAddr
+    pub host: IpAddr,
+
+    #[clap(long)]
+    pub disable_ip_limit: bool,
 }

@@ -2,23 +2,22 @@ use quinn::{RecvStream, SendStream};
 use wincode::error::{ReadResult, WriteResult};
 use wincode::{SchemaRead, SchemaWrite};
 
-#[derive(SchemaRead, SchemaWrite)]
-#[derive(Debug)]
+#[derive(SchemaRead, SchemaWrite, Debug)]
 pub enum ClientMessage {
     Ping,
     Work,
     GetBalance,
-    GetFlag
+    GetFlag,
 }
 
-#[derive(SchemaRead, SchemaWrite)]
+#[derive(SchemaRead, SchemaWrite, Debug)]
 pub enum ServerResponse {
     Pong,
     Worked(u32),
     Balance(u32),
     BadWork(String),
     YouAreTooPoor,
-    Flag(String)
+    Flag(String),
 }
 
 impl ClientMessage {
@@ -42,7 +41,7 @@ impl ServerResponse {
 }
 
 pub async fn send_frame(tx: &mut SendStream, data: &[u8]) -> anyhow::Result<()> {
-    let size = data.len();
+    let size = data.len() as u32;
     let size_buf = size.to_le_bytes();
     tx.write(&size_buf).await?;
     tx.write(data).await?;

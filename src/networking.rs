@@ -1,21 +1,23 @@
-use std::collections::HashSet;
 use crate::cli::Args;
 use crate::constants::{FLAG_COST, MAX_BI_STREAMS, MAX_IDLE_TIMEOUT, MONEY_PER_WORK};
+use crate::messages::{ClientMessage, ServerResponse, recv_frame, send_frame};
+use crate::util::HumanDuration;
+use anyhow::anyhow;
 use quinn::rustls::pki_types::PrivateKeyDer;
 use quinn::{Connection, Endpoint, RecvStream, SendStream, ServerConfig, TransportConfig, VarInt};
 use rcgen::generate_simple_self_signed;
+use std::collections::HashSet;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
-use anyhow::anyhow;
+use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::time::Instant;
-use tracing::{error, info, instrument, warn, Instrument, Span};
-use crate::messages::{recv_frame, send_frame, ClientMessage, ServerResponse};
-use crate::util::HumanDuration;
+use tracing::{Instrument, Span, error, info, instrument, warn};
 
 pub struct Server {
     endpoint: Endpoint,
+    ip_limit_enabled: bool,
 }
 
 impl Server {
@@ -25,7 +27,10 @@ impl Server {
         let endpoint = Endpoint::server(conf, bind_addr)?;
 
         info!("Server initialized");
-        Ok(Self { endpoint })
+        Ok(Self {
+            endpoint,
+            ip_limit_enabled: !args.disable_ip_limit,
+        })
     }
 
     #[instrument(skip(self))]
@@ -40,8 +45,16 @@ impl Server {
 
         while let Some(incoming) = self.endpoint.accept().await {
             info!("Incoming connection: {:?}", incoming.remote_address());
-            if connected_ips.read().await.contains(&incoming.remote_address().ip()) {
-                warn!("Refusing connection from {} as this address already has an open connection", incoming.remote_address());
+            if self.ip_limit_enabled
+                && connected_ips
+                    .read()
+                    .await
+                    .contains(&incoming.remote_address().ip())
+            {
+                warn!(
+                    "Refusing connection from {} as this address already has an open connection",
+                    incoming.remote_address()
+                );
                 incoming.refuse();
                 continue;
             }
@@ -76,17 +89,25 @@ impl Server {
         while let Ok((tx, rx)) = conn.accept_bi().await {
             info!("Incoming stream");
             let money_cloned = money.clone();
-            tokio::spawn(async move {
-                if let Err(e) = Self::handle_stream(tx, rx, money_cloned).await {
-                    error!(%e, "Error occurred during stream handling");
+            tokio::spawn(
+                async move {
+                    if let Err(e) = Self::handle_stream(tx, rx, money_cloned).await {
+                        error!(%e, "Error occurred during stream handling");
+                    }
                 }
-            }.instrument(Span::current()));
+                .instrument(Span::current()),
+            );
         }
+        info!("Connection handler closed");
         Ok(())
     }
 
     #[instrument(skip_all)]
-    async fn handle_stream(mut tx: SendStream, mut rx: RecvStream, money: Arc<AtomicU32>) -> anyhow::Result<()> {
+    async fn handle_stream(
+        mut tx: SendStream,
+        mut rx: RecvStream,
+        money: Arc<AtomicU32>,
+    ) -> anyhow::Result<()> {
         info!("Handling stream");
 
         let mut can_work_at = Instant::now();
@@ -95,45 +116,51 @@ impl Server {
 
             let now = Instant::now();
             let resp = match m {
-                ClientMessage::Ping => {ServerResponse::Pong}
+                ClientMessage::Ping => ServerResponse::Pong,
                 ClientMessage::Work => {
                     if now < can_work_at {
                         let diff = can_work_at - now;
-                        ServerResponse::BadWork(format!("You can work again in {}", diff.human_duration()))
-                    }
-                    else {
-                        can_work_at = Instant::now();
+                        ServerResponse::BadWork(format!(
+                            "You can work again in {}",
+                            diff.human_duration()
+                        ))
+                    } else {
+                        can_work_at = Instant::now() + Duration::from_hours(3);
                         money.fetch_add(MONEY_PER_WORK, Ordering::Relaxed);
                         ServerResponse::Worked(MONEY_PER_WORK)
                     }
                 }
-                ClientMessage::GetBalance => {
-                    ServerResponse::Balance(money.load(Ordering::Acquire))
-                }
+                ClientMessage::GetBalance => ServerResponse::Balance(money.load(Ordering::Acquire)),
                 ClientMessage::GetFlag => {
                     if money.load(Ordering::Acquire) < FLAG_COST {
                         ServerResponse::YouAreTooPoor
-                    }
-                    else {
-                        ServerResponse::Flag(std::env::var("FLAG").unwrap_or("FLAG NOT LOADED".to_string()))
+                    } else {
+                        ServerResponse::Flag(
+                            std::env::var("FLAG").unwrap_or("FLAG NOT LOADED".to_string()),
+                        )
                     }
                 }
             };
 
+            info!("Responding with {:?}", resp);
             if let Err(e) = send_msg(&mut tx, resp).await {
                 warn!(%e, "Failed to respond to stream");
             }
         }
+        info!("Done handling stream");
         Ok(())
     }
 }
 
 async fn recv_msg(rx: &mut RecvStream) -> anyhow::Result<ClientMessage> {
-    ClientMessage::deserialize(recv_frame(rx).await?.as_slice()).map_err(|e| anyhow!("Failed to receive message: {e}"))
+    ClientMessage::deserialize(recv_frame(rx).await?.as_slice())
+        .map_err(|e| anyhow!("Failed to receive message: {e}"))
 }
 
 async fn send_msg(tx: &mut SendStream, msg: ServerResponse) -> anyhow::Result<()> {
-    send_frame(tx, msg.serialize()?.as_slice()).await.map_err(|e| anyhow!("Failed to send message: {e}"))
+    send_frame(tx, msg.serialize()?.as_slice())
+        .await
+        .map_err(|e| anyhow!("Failed to send message: {e}"))
 }
 
 fn make_conf() -> anyhow::Result<ServerConfig> {

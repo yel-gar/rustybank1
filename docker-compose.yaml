@@ -1,0 +1,10 @@
+services:
+  rustybank1:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${PUBLIC_PORT:?}:8080/udp"
+    environment:
+      - FLAG
+    mem_limit: 64m
+    cpus: 0.2
