@@ -2,9 +2,6 @@ use quinn::{RecvStream, SendStream};
 use wincode::error::{ReadResult, WriteResult};
 use wincode::{SchemaRead, SchemaWrite};
 
-type Username = String;
-type Password = String;
-
 #[derive(SchemaRead, SchemaWrite)]
 #[derive(Debug)]
 pub enum ClientMessage {

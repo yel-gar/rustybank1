@@ -7,7 +7,6 @@ use rcgen::generate_simple_self_signed;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::{Duration};
 use anyhow::anyhow;
 use tokio::sync::RwLock;
 use tokio::time::Instant;
@@ -24,7 +23,7 @@ impl Server {
         let conf = make_conf()?;
         let bind_addr = SocketAddr::new(args.host, args.port);
         let endpoint = Endpoint::server(conf, bind_addr)?;
-        
+
         info!("Server initialized");
         Ok(Self { endpoint })
     }
@@ -36,9 +35,9 @@ impl Server {
             Err(_) => "(unknown)".to_string(),
         };
         info!("Server listening on {addr_str}");
-        
+
         let connected_ips: Arc<RwLock<HashSet<IpAddr>>> = Default::default();
-        
+
         while let Some(incoming) = self.endpoint.accept().await {
             info!("Incoming connection: {:?}", incoming.remote_address());
             if connected_ips.read().await.contains(&incoming.remote_address().ip()) {
@@ -46,7 +45,7 @@ impl Server {
                 incoming.refuse();
                 continue;
             }
-            
+
             match incoming.await {
                 Ok(conn) => {
                     info!("Accepted connection from {}", conn.remote_address());
@@ -54,11 +53,11 @@ impl Server {
                     let ips = connected_ips.clone();
                     tokio::spawn(async move {
                         ips.write().await.insert(conn_ip);
-                        
+
                         if let Err(e) = Self::handle_connection(conn).await {
                             error!(%e, "Error occured during connection handling");
                         }
-                        
+
                         ips.write().await.remove(&conn_ip);
                     });
                 }
@@ -72,7 +71,7 @@ impl Server {
     #[instrument(skip_all, fields(addr=conn.remote_address().to_string()))]
     async fn handle_connection(conn: Connection) -> anyhow::Result<()> {
         info!("Started connection handler");
-        
+
         let money = Arc::new(AtomicU32::new(0));
         while let Ok((tx, rx)) = conn.accept_bi().await {
             info!("Incoming stream");
@@ -89,11 +88,11 @@ impl Server {
     #[instrument(skip_all)]
     async fn handle_stream(mut tx: SendStream, mut rx: RecvStream, money: Arc<AtomicU32>) -> anyhow::Result<()> {
         info!("Handling stream");
-        
+
         let mut can_work_at = Instant::now();
         while let Ok(m) = recv_msg(&mut rx).await {
             info!("Incoming message: {:?}", m);
-            
+
             let now = Instant::now();
             let resp = match m {
                 ClientMessage::Ping => {ServerResponse::Pong}
@@ -120,7 +119,7 @@ impl Server {
                     }
                 }
             };
-            
+
             if let Err(e) = send_msg(&mut tx, resp).await {
                 warn!(%e, "Failed to respond to stream");
             }

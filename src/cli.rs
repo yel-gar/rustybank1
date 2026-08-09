@@ -1,5 +1,5 @@
 use clap::Parser;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr};
 
 #[derive(Parser)]
 pub struct Args {
