@@ -1,6 +1,9 @@
 use quinn::{RecvStream, SendStream};
+use tracing::warn;
 use wincode::error::{ReadResult, WriteResult};
 use wincode::{SchemaRead, SchemaWrite};
+
+pub const MAX_MESSAGE_SIZE: u32 = 2048;
 
 #[derive(SchemaRead, SchemaWrite, Debug)]
 pub enum ClientMessage {
@@ -52,6 +55,11 @@ pub async fn recv_frame(rx: &mut RecvStream) -> anyhow::Result<Vec<u8>> {
     let mut size_buf = [0u8; 4];
     rx.read_exact(&mut size_buf).await?;
     let size = u32::from_le_bytes(size_buf);
+    if size > MAX_MESSAGE_SIZE {
+        let _ = rx.stop(1u32.into());
+        warn!("Too large payload");
+        return Err(anyhow::anyhow!("Too large payload"));
+    }
     let mut data_buf = vec![0u8; size as usize];
     rx.read_exact(&mut data_buf).await?;
     Ok(data_buf.to_vec())
